@@ -115,20 +115,57 @@ def post_exp_eda1 (
         outcome : pd.DataFrame(),
         title = ''
         ) :
+    #TODO: Add plot export functionality
     
     # Get preference parameters for surviving farmers; print means
-    params = outcome[PARAMS] # separate out params
+    params = outcome[PARAMS] # create params subset
+    
+    # count of farmers in village
+    aveCount   = outcome.groupby('trial').count()['farmer'].mean() 
+    # cross-village farmer survival rate
+    rateFarmer = outcome['status'].sum()/len(outcome) 
+    # implied village survival rate
+    rateNaive  = (1 - (1 - rateFarmer)**aveCount) 
+    # observed village survival rate
+    rateTrial  = (outcome.groupby('trial').max()['days']==DAYS).sum()/VILLAGES 
+    
+    # Create normalized array
+    dfNorm = outcome[['status']].copy()
+    dfNorm.loc[:,PARAMS] = (
+        outcome[PARAMS].div(outcome[PARAMS].sum(axis=1), axis=0)
+        ).copy()
+    
     sessionLog.print(
-        '\n',title,
-        'survival rate:', 
-        round(100 * outcome['status'].sum()/len(outcome), 2),
-        '%\n',
-        "survivors, mean params:\n", 
-        (outcome[['status','gamma','omega','beta','eta']]
+        '\n',title,'\n',
+        f'farmer survival rate:  {round(100*rateFarmer, 2)}%\n', 
+         f'village survival rate: {round(100*rateTrial, 2)}%',
+        f'(Naive rate {round(100*rateNaive,2)}%)\n'
+        '\n',
+        "Param means by status:\n", 
+        (outcome[['status']+PARAMS]
+            .groupby('status')
+            .mean()
+            ),
+        '\n\n',
+        "Param means by status (norm.):\n", 
+        (dfNorm
             .groupby('status')
             .mean()
             )
         )
+    
+    # Plot hist of days survived
+    plt.hist(
+        outcome['days'], 
+        bins=30, 
+        color='steelblue', 
+        edgecolor='white'
+        )
+    plt.yscale("log")
+    plt.xlabel('Days survived')
+    plt.ylabel('Number of villages')
+    plt.title('Village survival duration, '+title)
+    plt.show();
     
     # Plot parameter distributions
     fig, axes = plt.subplots(2, 2, figsize=(8, 6))
@@ -144,22 +181,31 @@ def post_exp_eda1 (
     
         ax.set_title(param)
         ax.legend()
+        ax.set_yscale('log')
     plt.suptitle(f"{title}")
     plt.tight_layout()
     plt.show();
     
-    # Plot hist of days survived
-    plt.hist(
-        outcome['days'], 
-        bins=30, 
-        color='steelblue', 
-        edgecolor='white'
+    # Do it again but normalized
+    params = dfNorm[PARAMS] # overwrite alias for ease
+    fig, axes = plt.subplots(2, 2, figsize=(8, 6))
+    axes = axes.ravel()      # or axes.flatten()
+    
+    for ax, param in zip(axes, params):
+        dfNorm.loc[dfNorm.status == 0, param].hist(
+            bins=30, alpha=0.5, ax=ax, label="status = 0"
         )
-    plt.yscale("log")
-    plt.xlabel('Days survived')
-    plt.ylabel('Number of villages')
-    plt.title('Village survival duration, '+title)
+        dfNorm.loc[dfNorm.status == 1, param].hist(
+            bins=30, alpha=0.5, ax=ax, label="status = 1"
+        )
+    
+        ax.set_title(param)
+        ax.legend()
+        ax.set_yscale('log')
+    plt.suptitle(f"{title} (norm.)")
+    plt.tight_layout()
     plt.show();
+    
 ####
 def agent_quantity (
         agent, 

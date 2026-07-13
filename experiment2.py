@@ -26,7 +26,7 @@ import whiterunMarket as wrm
 #
 
 
-
+sessionLog = wrm.sessionLog # alias
 # =========================================================================== #
 
 
@@ -37,7 +37,7 @@ import whiterunMarket as wrm
 #### EXPERIMENT 2
 # Define a class for Experiment 2
 class experiment2 :
-    def __init__(self, func, **kwargs) :
+    def __init__(self, func, verbose=True, **kwargs) :
         # Experiment 2 -- Parameters
         #   Include experiment specific parameters specifications, so we can
         #   test alternate specifications within the same session
@@ -61,6 +61,9 @@ class experiment2 :
         
         # Save distro function to pass to farmer __init__
         self.func = func
+        
+        # Pass verbose bin to self
+        self.verbose = verbose
         
     #   end def init
     
@@ -190,7 +193,7 @@ class experiment2 :
             
             # Save results; notify user
             self.outcome = pd.concat([self.outcome, df], ignore_index=True)
-            sessionLog.print('Village '+str(v)+' complete!')
+            if self.verbose : sessionLog.print('Village '+str(v)+' complete!')
         #   end for villages -- end of simulations
     #   end def runSim
 #   end experiment2
@@ -226,6 +229,15 @@ def main () :
     
     
     
+    # Experiment 2 D
+    sessionLog.print('Experiment 2.D (Dirichlet-adjusted) start')
+    
+    vecParam = [0.285580,  0.157223,  0.495946,  0.061252]
+    exp2d = experiment2(lambda : np.random.dirichlet(vecParam))
+    exp2d.runSimulation()
+    
+    
+    
     
     
     ####    EXPERIMENT RESULTS  ####
@@ -236,26 +248,20 @@ def main () :
     sessionLog.print('Experiment run complete; starting evaluation of results.')
     
     wrm.post_exp_eda1(exp2a.outcome, 'Log-Normal (2)')
-    exp2a.outcome[wrm.PARAMS] = (
-        exp2a.outcome[wrm.PARAMS].div(exp2a.outcome[wrm.PARAMS].sum(axis=1), axis=0)
-        )
-    wrm.post_exp_eda1(exp2a.outcome, 'Log-Normal (2) (norm.)')
     
     
     
     wrm.post_exp_eda1(exp2b.outcome, 'Gamma (2)')
-    exp2b.outcome[wrm.PARAMS] = (
-        exp2b.outcome[wrm.PARAMS].div(exp2b.outcome[wrm.PARAMS].sum(axis=1), axis=0)
-        )
-    wrm.post_exp_eda1(exp2b.outcome, 'Gamma (2) (norm.)')
     
     
     
     wrm.post_exp_eda1(exp2c.outcome, 'Dirichlet (2)')
-    exp2c.outcome[wrm.PARAMS] = (
-        exp2c.outcome[wrm.PARAMS].div(exp2c.outcome[wrm.PARAMS].sum(axis=1), axis=0)
-        )
-    wrm.post_exp_eda1(exp2c.outcome, 'Dirichlet (2) (norm.)')
+    
+    
+    
+    wrm.post_exp_eda1(exp2d.outcome, 'Dirichlet-adj. (2)')
+    
+    
     
     ####
 #   end 
