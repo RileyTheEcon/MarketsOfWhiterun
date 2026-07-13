@@ -26,11 +26,41 @@ import matplotlib.pyplot as plt
 
 
 
+# Use named tuple to make references easier
+PARAMS = ['gamma', 'omega', 'beta', 'eta']
+PREFS  = namedtuple('PREFS', PARAMS)
+
+# Import or set session parameters
 if os.path.exists('config.json'):
     with open('config.json') as f:
         CONFIG = json.load(f)
 else:
-    CONFIG = {'example': 'name'}
+    # ['EXPERIMENT PARAMS']
+    VILLAGES   = int(1E3) # number of villages to text
+    DAYS       = int(1E3) # number of days to simulate
+    
+    # ['WORLD PARAMS']
+    FARMERS    = 12  # number of farmer per village
+    PROD_WHEAT = 3 # amount of wheat produced per production action
+    
+    # ['MARKET PARAMS']
+    PR_BREAD   = 3 # initial price of bread
+    PR_WHEAT   = 1 # initial price of wheat
+    
+    # ['FARMER PARAMS']
+    # Farmer status change parameters
+    EXHAUSTION = 1 # amount of hunger gained per production action
+    STARVATION = 5 # max amount of hunger allowed before starvation
+    RECOVERY   = 0 # eating resets hunger if 0, else reduces hunger
+    
+    # Initial conditions for farmer agent inventories
+    BREAD      = 1
+    WHEAT      = 0
+    GOLD       = 3
+    HUNGER     = 0
+    
+#   end CONFIG
+
 # =========================================================================== #
 
 
@@ -38,7 +68,10 @@ else:
 
 
 # ================================ FUNCTIONS ================================ #
-# Define console logging object--in case I haven't pushed library update yet
+# Define console logging object
+# --I'm in the middle of a big reformating effort of my library to get it closer to the standards to
+# be included into PIP and CONDA-FORGE, so I'm hardcoding stuff here in case a reference has to be
+# changed in the library.
 class logger :
     def __init__ (
             self,
@@ -78,72 +111,118 @@ class logger :
 #   Initialize console log
 sessionLog = logger()
 ###############################
-def survivor_prefs(exp):
-    """Return a DataFrame of (gamma, omega, beta, eta) for every farmer
-    that was still alive at the end of its village's run."""
-    records = [
-        farmer.prefs._asdict()
-        for trial in exp.outcome
-        for farmer in trial['farmers'].values()
-        if farmer.status > 0
-    ]
-    return pd.DataFrame(records)
-#   end prefs
-def village_survival (
-        exp
-        ) :
-    ''' Return a list of village survival times
-    '''
-    return [v['days'] for v in exp.outcome]
-####
 def post_exp_eda1 (
-        exp,
+        outcome : pd.DataFrame(),
         title = ''
         ) :
+    
     # Get preference parameters for surviving farmers; print means
-    exp.dfPrefs = survivor_prefs(exp)
+    params = outcome[PARAMS] # separate out params
     sessionLog.print(
-        title,"survivors, mean params:\n", 
-        exp.dfPrefs.mean()
+        '\n',title,
+        'survival rate:', 
+        round(100 * outcome['status'].sum()/len(outcome), 2),
+        '%\n',
+        "survivors, mean params:\n", 
+        (outcome[['status','gamma','omega','beta','eta']]
+            .groupby('status')
+            .mean()
+            )
         )
     
     # Plot parameter distributions
-    exp.dfPrefs.hist(bins=30, figsize=(8, 6))
-    plt.suptitle(title+' prior — surviving farmers')
+    fig, axes = plt.subplots(2, 2, figsize=(8, 6))
+    axes = axes.ravel()      # or axes.flatten()
+    
+    for ax, param in zip(axes, params):
+        outcome.loc[outcome.status == 0, param].hist(
+            bins=30, alpha=0.5, ax=ax, label="status = 0"
+        )
+        outcome.loc[outcome.status == 1, param].hist(
+            bins=30, alpha=0.5, ax=ax, label="status = 1"
+        )
+    
+        ax.set_title(param)
+        ax.legend()
+    plt.suptitle(f"{title}")
     plt.tight_layout()
     plt.show();
     
-    # Get list of number of days villages survived
-    exp.days = village_survival(exp)
-    
     # Plot hist of days survived
     plt.hist(
-        exp.days, 
+        outcome['days'], 
         bins=30, 
         color='steelblue', 
         edgecolor='white'
         )
+    plt.yscale("log")
     plt.xlabel('Days survived')
     plt.ylabel('Number of villages')
     plt.title('Village survival duration, '+title)
     plt.show();
+####
+def agent_quantity (
+        agent, 
+        price, 
+        **kwargs
+        ) :
+    ''' Provided an agent-object with inventory and utility function, find the
+        quantity of a good to transact until marginal utility is negative
+    '''
+    # Get resource relation -- 1 = increasing ; -1 = decreasing
+    dWheat = kwargs.get('wheat', 0)
+    dBread = kwargs.get('bread', 0)
+    dGold  = kwargs.get('gold',  0)
+
+    #   Define assistant functions
+    # Create theoretical inventory, given (q)uantity transacted
+    def state (q) :
+        return dict(
+            wheat = agent.wheat + dWheat*q,
+            bread = agent.bread + dBread*q,
+            gold  = agent.gold  + dGold*price*q
+            )
+    #   end state
+
+    # Check if resources are exhausted
+    def feasible (q) :
+        s = state(q)
+        return (s['wheat'] >= 0) and (s['bread'] >= 0) and (s['gold'] >= 0)
+    #   end feasible
+
+    quantity = 0  # create in memory
+    prevUtil = agent.utility(**state(quantity)) 
     
+    #NOTE: The seq'ing here is important: Resource exhaustion must be check
+    # before util is calc'ed or else -1 is passed to util which 
+    # throws ln(0) error
+    #TODO: Change decision behavior at marginUtil == 0
+    while feasible(quantity+1) :
+        # Calc current utility
+        currentUtil = agent.utility(**state(quantity+1))
+        
+        # Check if marginal util negative
+        if currentUtil - prevUtil < 0 : break
+        
+        # Increment + pass value for next iter
+        quantity += 1
+        prevUtil  = currentUtil
+    #   end while
+
+    return quantity
 ####
 
 
-# EXPERIMENT 1
-# Use named tuple to make references easier
-Prefs = namedtuple('Prefs', ['gamma', 'omega', 'beta', 'eta'])
-
+####    AGENTS
 # Define a class for Farmer
-class farmerObj :
-    def __init__(self, func) :
+class agentFarmer :
+    def __init__(self, func, **kwargs) :
         self.status = 1
-        self.prefs  = Prefs(*func())
-        self.bread  = 1
-        self.wheat  = 0
-        self.gold   = 3
-        self.hunger = 0
+        self.prefs  = PREFS(*func())
+        self.bread  = kwargs.get('bread', BREAD)   # initial bread inventory
+        self.wheat  = kwargs.get('wheat', WHEAT)   # initial wheat inventory
+        self.gold   = kwargs.get('gold',  GOLD)    # initial gold inventory
+        self.hunger = kwargs.get('hunger',HUNGER)  # initial hunger status
     #   end init
 
     def utility (self, **kwargs) :
@@ -160,175 +239,13 @@ class farmerObj :
                )
     #   end def utility
 
-#   end class farmerObj
+#   end class agentFarmer
+####
 
-
-
-# Define a class for Experiment 1
-class experiment1 :
-    def __init__(self, func) :
-        # Experiment 1 -- Parameters
-        self.VILLAGES = int(1E3) # number of villages to text
-        self.DAYS     = int(1E3) # number of days to simulate
-        self.FARMERS  = 12  # number of farmer per village
-
-        self.PR_BREAD   = 3 # price of bread
-        self.PR_WHEAT   = 1 # price of wheat
-        self.PROD_WHEAT = 3 # amount of wheat produced per production action
-        self.EXHAUSTION = 1 # amount of hunger gained per production action
-        self.STARVATION = 5 # max amount of hunger allowed before starvation
-
-        # Save distro function
-        self.func = func
-
-    #   end def init
-    
-    def runSimulation (self) :
-        # Iter thru village simulations
-        self.outcome = list()
-        for v in range(self.VILLAGES) :
-            # Initialize counter
-            dayCount = 0
-            
-            # Initialize village
-            dictFarmers = {f : farmerObj(self.func) for f in range(self.FARMERS)
-                          } # dict of farmers
-        
-            # Iter thru time frame
-            for t in range(self.DAYS) :
-                # Stop village if all farmers died
-                if not any(farmer.status > 0 for farmer in dictFarmers.values()):
-                    break
-                
-                # Iter thru farmers
-                for farmer in dictFarmers.values() :
-                    if farmer.status > 0 : # skip dead farmers
-                        marginalUtil = {
-                            'Idle' : 0
-                            } # Idle will always be 0
-
-                        # Action: Buy bread
-                        # Can't buy bread if you can't afford it
-                        marginalUtil['Buy bread'] = (
-                            -1 if farmer.gold < self.PR_BREAD else
-                            farmer.utility(
-                                bread=farmer.bread+(farmer.gold//self.PR_BREAD),
-                                gold=farmer.gold-(farmer.gold//self.PR_BREAD)*self.PR_BREAD
-                                ) - farmer.utility() # utility gain
-                            )
-
-                        # Action: Produce wheat
-                        # Can't produce wheat if you are already starving
-                        marginalUtil['Produce wheat'] = (
-                            -1 if farmer.hunger >= self.STARVATION  else
-                            farmer.utility(
-                                wheat=farmer.wheat+self.PROD_WHEAT,
-                                hunger=farmer.hunger+self.EXHAUSTION
-                                ) - farmer.utility() # utility gain
-                            )
-                        
-                        # Action: Sell wheat
-                        # Must have wheat before you can sell it
-                        marginalUtil['Sell wheat'] = (
-                            -1 if farmer.wheat < 1  else
-                            farmer.utility(
-                                wheat=0,
-                                gold=farmer.gold+(farmer.wheat*self.PR_WHEAT)
-                                ) - farmer.utility() # utility gain
-                            )
-                        
-                        # Do action that improves total utility
-                        action = max(marginalUtil, key=marginalUtil.get)
-                        
-                        # Apply action
-                        if action=='Buy bread' : 
-                            units = farmer.gold//self.PR_BREAD
-                            farmer.gold  -= units*self.PR_BREAD
-                            farmer.bread += units
-                        elif action=='Produce wheat': 
-                            farmer.wheat += self.PROD_WHEAT
-                            farmer.hunger += self.EXHAUSTION
-                        elif action=='Sell wheat': 
-                            farmer.gold += farmer.wheat*self.PR_WHEAT
-                            farmer.wheat = 0
-                        else : pass # "Idle" => do nothing
-                        
-                        # Farmers eat dinner
-                        if farmer.bread>0 :
-                            farmer.bread -= 1
-                            farmer.hunger = 0
-                            #TODO: Test hunger reduction
-                        else : # if you don't eat, you get hungry
-                            farmer.hunger += 1
-                            #TODO: Test idle hunger gain
-                        #   end dinner check
-                        
-                        if farmer.hunger>self.STARVATION : # deactivate hungry farmer
-                            farmer.status = 0
-                        #   end hunger check
-                    #   end if farmer not dead
-                #   end farmer iteration
-                #TODO: Baker agents
-                ''' In a different experiment we can see what happens when we
-                    give bakers their own inventories and gold
-                '''
-                dayCount += 1
-            #   end for days -- end of time frame
-            self.outcome.append({
-                'trial'   : v, # what trial number is it within experiment
-                'days'    : dayCount, # total number of days complete
-                'farmers' : dictFarmers
-                })
-            
-            sessionLog.print('Village '+str(v)+' complete!')
-        #   end for villages -- end of simulations
-    #   end def runSim
-#   end experiment1
-
-# MAIN
+####    MAIN
 def main () :
     # Initialize
-    
-    # Experiment 1 A
-    sessionLog.print('Experiment 1.A (Log-Normal) start')
-    
-    m = 0
-    v = 1
-    
-    exp1a = experiment1(lambda : np.random.lognormal(mean=m, sigma=v, size=4))
-    exp1a.runSimulation()
-    
-    post_exp_eda1(exp1a, 'Log-Normal')
-    
-    
-    
-    
-    
-    # Experiment 1 B
-    sessionLog.print('Experiment 1.B (Gamma) start')
-    
-    alpha = 1
-    beta  = 1
-    
-    exp1b = experiment1(lambda : np.random.gamma(alpha,1/beta, size=4))
-    exp1b.runSimulation()
-    
-    post_exp_eda1(exp1b, 'Gamma')
-    
-    
-    
-    
-    
-    # Experiment 1 C
-    sessionLog.print('Experiment 1.C (Dirichlet) start')
-    
-    exp1c = experiment1(lambda : np.random.dirichlet([1.0,1.0,1.0,1.0]))
-    exp1c.runSimulation()
-    
-    post_exp_eda1(exp1c, 'Dirichlet')
-    
-    
-    
+    sessionLog.print(__doc__)
     
     
 #   end 
@@ -340,8 +257,6 @@ def main () :
 
 # =================================== MAIN ================================== #
 if __name__ == "__main__" :
-    sessionLog.print(__doc__)
-    
     main()
     
 #   endif
